@@ -4,6 +4,10 @@
 
 Built solo, from scratch, in Python on ROS 2 Jazzy.
 
+![HDVI-SLAM demo](assets/demo.gif)
+
+> More demos: [live demos and walkthroughs](YOUR_WEBSITE_URL)
+
 ---
 
 ## What it does
@@ -22,12 +26,12 @@ Closed-loop circle walks, room-scale, returning to a marked start:
 
 | Configuration        | Position error | Heading error |
 |----------------------|----------------|---------------|
-| Loop closure OFF     | ~9.5 cm        | ~7.6°         |
-| Loop closure ON      | ~0.8 – 3.3 cm  | ~0.4 – 5.5°   |
+| Loop closure OFF     | ~9.5 cm        | ~7.6 deg      |
+| Loop closure ON      | ~0.8 - 3.3 cm  | ~0.4 - 5.5 deg|
 
-Loop closure delivers a consistent ~3–5× reduction in position error. On rectangle and pivot runs the position error lands around 1–2 cm.
+Loop closure delivers a consistent ~3-5x reduction in position error. On rectangle and pivot runs the position error lands around 1-2 cm.
 
-Per-keyframe cost is dominated by ICP registration (~85–95% of the cycle); the iSAM2 backend update is ~1 ms and never the bottleneck.
+Per-keyframe cost is dominated by ICP registration (~85-95% of the cycle); the iSAM2 backend update is ~1 ms and never the bottleneck.
 
 ---
 
@@ -36,9 +40,9 @@ Per-keyframe cost is dominated by ICP registration (~85–95% of the cycle); the
 The system is split into three strictly-separated layers so the estimation core can be tested with no hardware and no ROS:
 
 ```
-drivers/   →  Orbbec SDK: RGBD frames + IMU. The only place the camera SDK is imported.
-core/      →  Sensor- and middleware-agnostic estimation. numpy / Open3D / GTSAM only.
-viz/       →  ROS 2 publishers (Path + colored map). The only place ROS is imported.
+drivers/   ->  Orbbec SDK: RGBD frames + IMU. The only place the camera SDK is imported.
+core/      ->  Sensor- and middleware-agnostic estimation. numpy / Open3D / GTSAM only.
+viz/       ->  ROS 2 publishers (Path + colored map). The only place ROS is imported.
 ```
 
 Everything crossing from hardware into the core passes through two dataclasses (`CloudFrame`, `ImuSample`), so the core never depends on the camera or ROS.
@@ -90,20 +94,20 @@ tests/           Unit tests for core estimation (no hardware required)
 sudo ip addr add 192.168.1.10/24 dev enp45s0
 ```
 
-**Terminal 1 — static transform:**
+**Terminal 1 - static transform:**
 ```bash
 source /opt/ros/jazzy/setup.bash
 ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 world map
 ```
 
-**Terminal 2 — RViz2:**
+**Terminal 2 - RViz2:**
 ```bash
 source /opt/ros/jazzy/setup.bash
 rviz2
 # Fixed Frame = map; add /slam/trajectory (Path) and /slam/map (PointCloud2, Color Transformer = RGB8)
 ```
 
-**Terminal 3 — pipeline:**
+**Terminal 3 - pipeline:**
 ```bash
 cd hdvi-slam && source venv/bin/activate
 PYTHONPATH=".:/opt/ros/jazzy/lib/python3.12/site-packages" \
@@ -121,8 +125,8 @@ PYTHONPATH="." pytest
 
 A few of the harder problems solved along the way:
 
-- **IMU delivery, 9.4 Hz → 202 Hz.** The IMU was being delivered bundled inside depth-paced framesets via a polling interface, capping it near the depth rate. Fixed by switching to the SDK's callback interface (IMU as its own native-rate stream) and moving depth-to-cloud conversion onto a dedicated worker thread so it never blocks IMU delivery.
-- **Loop-closure verification.** Seeding verification ICP from live optimized poses (not identity) and running coarse-to-fine (wide radius for reach, narrow radius for an honest score) raised accepted-closure fitness from ~0.5 to ~0.85–0.96.
+- **IMU delivery, 9.4 Hz -> 202 Hz.** The IMU was being delivered bundled inside depth-paced framesets via a polling interface, capping it near the depth rate. Fixed by switching to the SDK's callback interface (IMU as its own native-rate stream) and moving depth-to-cloud conversion onto a dedicated worker thread so it never blocks IMU delivery.
+- **Loop-closure verification.** Seeding verification ICP from live optimized poses (not identity) and running coarse-to-fine (wide radius for reach, narrow radius for an honest score) raised accepted-closure fitness from ~0.5 to ~0.85-0.96.
 - **Adaptive ICP point cap.** Re-voxelizing wide-open views instead of random thinning cut worst-case registration from ~2900 ms to ~400 ms.
 - **Turn-on bias seeding.** Measuring MEMS turn-on bias at startup (instead of assuming zero) removed ~15 cm of position drift per 2 s.
 - **Weak-edge reject handling.** Failed ICP registrations are added as inflated-sigma constraints rather than dropped, eliminating chain holes where loop-closure corrections used to pool and tear the map.
@@ -137,4 +141,4 @@ Working end to end, including loop closure. Active areas: heading-error repeatab
 
 ## License
 
-See [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE).
