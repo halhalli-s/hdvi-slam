@@ -4,9 +4,9 @@
 
 Built solo, from scratch, in Python on ROS 2 Jazzy.
 
-![HDVI-SLAM demo](assets/demo.gif)
+![HDVI-SLAM demo](assets/hdvi_rect_lc.gif)
 
-> More demos: [live demos and walkthroughs](YOUR_WEBSITE_URL)
+> More demos: [live demos and walkthroughs](https://halhalli-s.github.io/Projects/hdvi_slam.html)
 
 ---
 
