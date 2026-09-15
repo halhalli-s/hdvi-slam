@@ -1,0 +1,207 @@
+# =============================================================================
+# SachiSLAM — Orbbec Gemini 435Le configuration
+# =============================================================================
+# All hardware-facing numbers live here so that the code in core/ stays
+# sensor-agnostic. Only drivers/camera_driver.py and the various node
+# constructors read this file. Nothing in core/ should hard-code a value that
+# belongs here.
+# =============================================================================
+
+camera:
+  model: "Orbbec Gemini 435Le"
+  # SDK frame-aggregate output mode (OBFrameAggregateOutputMode member name).
+  # SINGLE place to change per §7 step 2: FULL_FRAME_REQUIRE throttles the IMU
+  # to depth rate (~10 Hz measured) because a frameset only emits when every
+  # stream has a fresh frame. Switch to a mode that emits per-IMU-sample to
+  # restore ~200 Hz (then re-run Allan variance).
+  frame_aggregate_mode: ANY_SITUATION
+  # Depth stream configuration (consumed by drivers/camera_driver.py).
+  depth:
+    width: 848
+    height: 480
+    fps: 15                 # depth arrives at ~15 fps
+    # Depth scale: raw uint16 depth units -> meters. Confirm against the SDK
+    # profile at runtime; 0.001 == depth reported in millimeters.
+    depth_scale: 0.001
+    # Points farther than this are discarded before ICP (meters).
+    max_range_m: 8.0
+    min_range_m: 0.2
+
+imu:
+  # IMU streams at ~200 Hz, asynchronously from depth.
+  rate_hz: 200
+
+  # ---------------------------------------------------------------------------
+  # Axis convention (camera-relative):
+  #   X = right, Y = down, Z = forward
+  # This matches the optical frame convention. The preintegrator applies
+  # body_P_sensor below to move measurements into the body frame used by the
+  # factor graph. If you re-mount the IMU, only body_P_sensor changes.
+  # ---------------------------------------------------------------------------
+
+  # Extrinsic: pose of the IMU sensor expressed in the body frame.
+  # Translation from the datasheet (meters). Rotation assumed identity here;
+  # replace with the measured/calibrated rotation once available.
+  body_P_sensor:
+    translation: [0.01548, 0.0, -0.05560]   # meters (datasheet)
+    # Rotation as a quaternion [w, x, y, z]. Identity = IMU axes already
+    # aligned with the body frame. TODO: refine via calibration.
+    rotation_quaternion: [1.0, 0.0, 0.0, 0.0]
+
+  # Gravity magnitude (m/s^2) used to build the preintegration params.
+  gravity_magnitude: 9.81
+
+  # Static window (s) averaged at startup to measure BOTH tilt and turn-on IMU
+  # bias from the same samples. Bias regenerates each power-on, so it is
+  # measured at runtime, never hard-coded.
+  startup_bias_window_s: 10.0
+
+  # Stationarity gate for the startup calibration. If the rig moved during the
+  # window, the derived tilt/bias are garbage — reject rather than seed them.
+  startup_validation:
+    max_accel_std: 0.1       # m/s^2   (per-axis accel std ceiling)
+    max_gyro_std: 0.02       # rad/s   (per-axis gyro std ceiling)
+    max_gravity_err: 0.5     # m/s^2   (||mean_accel| - g| ceiling)
+    max_gyro_bias: 0.05      # rad/s   (||mean_gyro|| sanity bound)
+
+  # Runtime stationary detector (distinct from startup_validation above, which
+  # is a one-shot check). HYSTERESIS + dwell, replacing a single std threshold
+  # that noise straddled — the state flapped ~80x in a 55s run. Enter stationary
+  # only when BOTH accel & gyro std drop below the enter (low) values; leave only
+  # when EITHER rises above the exit (high) value; hold in the dead band between.
+  # min_dwell_s blocks any state change for that long after a transition.
+  #   Observed on-device (200 Hz, ~20-sample window) while still:
+  #     gyro_std ~0.009-0.011 rad/s  -> bracketed by the [0.005, 0.015] band,
+  #                                     so noise no longer toggles the state.
+  #   (accel_std range was not separately logged; the [0.02, 0.05] band mirrors
+  #    the prior single-threshold placement of 0.035 — tune once observed.)
+  stationary:
+    enter_gyro_std: 0.005    # rad/s   (enter stationary below this)
+    exit_gyro_std: 0.015     # rad/s   (leave stationary above this)
+    enter_accel_std: 0.02    # m/s^2   (enter stationary below this)
+    exit_accel_std: 0.05     # m/s^2   (leave stationary above this)
+    min_dwell_s: 1.0         # s       (min time in a state before it can flip)
+
+  # ---------------------------------------------------------------------------
+  # Noise parameters — from Allan variance characterization (dated 2026-08-13,
+  # 1.46M samples over ~2 h at 202.17 Hz; worst axis per parameter). Measured on
+  # THIS unit via calibration/; see calibration/allan_variance.py. Re-run and
+  # update if the sensor is replaced.
+  # ---------------------------------------------------------------------------
+  noise:
+    gyro_noise_density: 4.54481e-05      # rad/s/sqrt(Hz)   (angular random walk)
+    gyro_bias_random_walk: 1.8918e-06    # rad/s^2/sqrt(Hz) (rate random walk)
+    accel_noise_density: 0.000557148     # m/s^2/sqrt(Hz)   (velocity random walk)
+    accel_bias_random_walk: 4.20298e-05  # m/s^3/sqrt(Hz)   (acceleration random walk)
+    # Numerical integration uncertainty of the preintegration itself.
+    integration_sigma: 0.0001
+
+# Keyframe selection thresholds. A new keyframe is triggered when EITHER the
+# accumulated translation or rotation since the last keyframe exceeds these.
+keyframe:
+  translation_m: 0.10
+  rotation_deg: 6.0
+  # Use the full velocity-inclusive predicted translation for the trigger
+  # instead of the gravity-cancelled estimate (which drops v_i*dt and
+  # under-counts steady motion, firing keyframes late). Off by default.
+  use_velocity_in_trigger: false
+  # Stale-velocity guard: if ||v_i|| exceeds this (m/s), fall back to the
+  # gravity-cancelled distance for the trigger rather than trust a bad velocity.
+  max_trigger_velocity: 2.0
+  # Use the trigger's own gyro-tracked window-start rotation for gravity
+  # cancellation instead of backend.current_pose.rotation() (which is stale
+  # while the worker runs add_keyframe, up to ~1.4s). Off by default; [TRIGGER]
+  # logs both so the divergence is visible before enabling.
+  use_tracked_rotation: false
+  # Master switch for the runtime stationary detector (imu.stationary above).
+  # When false: no trigger gating and no periodic PIM reset — the trigger runs
+  # purely on the gravity-cancelled dP threshold.
+  use_stationary_detector: false
+
+# Debug / verbose logging toggles.
+debug:
+  # When true, print [TRIGGER] on EVERY trigger evaluation (per depth frame) and
+  # the "imu/depth ts drift" line — this is how gravity-residual growth was
+  # diagnosed, kept recoverable. Default false: [TRIGGER] prints only when a
+  # keyframe actually fires (one consolidated line, with the keyframe index).
+  verbose_trigger: false
+
+# Point-to-plane ICP front-end parameters.
+icp:
+  voxel_size: 0.02                 # meters, downsample leaf size
+  max_correspondence_distance: 0.09
+  max_iteration: 20
+  relative_fitness: 1.0e-6
+  relative_rmse: 1.0e-6
+  # Normals are estimated on the target cloud with this search radius / knn.
+  normal_radius: 0.05
+  normal_max_nn: 30
+  # Adaptive point cap: if a cloud still exceeds this after voxel_size
+  # downsampling, re-voxelize at a coarser leaf so point count lands near the
+  # cap (uniform spacing preserved for normals). 0 disables. Bounds ICP cost.
+  max_points: 22000
+  # Seed odometry ICP with the full IMU-predicted translation (not just
+  # rotation). Off by default — enable now that the bias fix makes the
+  # gravity-cancelled translation clean (~1.9cm/1.8s stationary).
+  use_imu_translation_seed: false
+  # Reject an IMU translation seed larger than this (meters) and fall back to
+  # zero: a seed beyond max_correspondence_distance is worse than none.
+  max_imu_translation_seed_m: 0.5
+  # Odometry ICP hard-reject gate: below this fitness the ICP BetweenFactor is
+  # dropped entirely for that keyframe (ImuFactor still connects it), so a bad
+  # registration cannot corrupt the graph.
+  min_fitness: 0.5
+
+# Loop closure detection / verification.
+loop_closure:
+  proximity_radius_m: 3.0          # search radius for candidate keyframes
+  # Loop-closure fitness gate — deliberately STRICTER than the odometry gate
+  # (icp.min_fitness): a false closure corrupts the whole graph.
+  min_fitness: 0.91
+  # Skip candidates whose index is within this many keyframes of the current
+  # one, so temporal neighbors can't be returned as loop candidates.
+  min_index_gap: 50
+  # Max verification ICPs per keyframe: rank candidates in the radius by
+  # distance and verify only the K closest. Caps loop-closure cost at O(1)
+  # instead of O(N) (which was stalling the backend for ~4 s at 11 keyframes).
+  max_candidates: 3
+  check_interval: 10
+  # Cap how many gated candidates become loop-closure factors per keyframe
+  # (all that pass min_fitness are added, strongest first, up to this many).
+  max_accepted_factors: 3
+  # Two-stage coarse->fine verification. Stage 1 runs ICP at a wide radius +
+  # few iterations to capture a rough alignment from the seed; stage 2 refines
+  # at icp.max_correspondence_distance / icp.max_iteration and is what min_fitness
+  # gates on. Stage-1 fitness is not comparable (loose radius) and is not gated.
+  coarse_corr_distance: 0.3        # meters (stage-1 max correspondence distance)
+  coarse_max_iteration: 20         # stage-1 ICP iteration cap
+  # TEMP diagnostic: seed the coarse verification ICP with identity instead of
+  # the graph-derived relative pose (T_i^-1 * T_j). The graph seed is still
+  # computed and its seed|t| logged on [LC-GATE]; an [identity-seed] marker is
+  # added to that line when this is true.
+  use_identity_seed: false
+
+# 3D occupancy map.
+octomap:
+  resolution: 0.05                 # meters per voxel at the finest level
+
+# RViz visualization.
+viz:
+  # Voxel leaf size for the accumulated map cloud published to RViz. Separate
+  # from icp.voxel_size (front-end registration) on purpose — tune display
+  # density without affecting ICP.
+  map_voxel_size: 0.02             # meters
+
+# Backend / optimizer knobs.
+backend:
+  # Between-factor noise for the constant-bias random walk edge.
+  bias_between_sigma: 0.01
+  # Anisotropic prior on B(0) (tangent order [accel(3); gyro(3)]). Accel bias is
+  # measured only along the up direction, so its perpendicular components are
+  # unmeasured -> loose. Gyro bias is measured directly -> tight. Both loosened
+  # from the old isotropic 1e-3 so iSAM2 can refine the seed from motion.
+  prior_bias_accel_sigma: 0.1      # m/s^2
+  prior_bias_gyro_sigma: 1.0e-3    # rad/s
+  # Base ICP between-factor sigmas (scaled inversely with fitness at runtime).
+  icp_rotation_sigma: 0.01        # rad
+  icp_translation_sigma: 0.005    # m

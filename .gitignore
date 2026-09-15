@@ -1,0 +1,37 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Virtual environment ----
+venv/
+.venv/
+env/
+
+# ---- Logs / run artifacts ----
+*.log
+run.log
+Log/
+Sample_test_logs/
+
+# ---- Calibration & sensor data (large / regenerable) ----
+calibration/data/*.csv
+calibration/data/*.png
+!calibration/data/.gitkeep
+
+# ---- RViz user configs ----
+*.rviz
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Internal onboarding doc (kept private) ----
+project_info.md

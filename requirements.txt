@@ -1,0 +1,18 @@
+# HDVISLAM Python dependencies.
+# Core estimation stack:
+numpy>=1.24
+open3d>=0.17          # ICP front-end + point clouds (core.types, icp_frontend)
+gtsam>=4.2            # factor graph, iSAM2, IMU preintegration (backend, imu)
+PyYAML>=6.0           # config loading
+
+# Dense mapping. octomap Python bindings vary by fork; wkentaro's is common:
+#   pip install octomap-python
+# (needs system liboctomap-dev / a working C++ toolchain).
+octomap-python>=1.8   # map_builder
+
+# Testing:
+pytest>=7.0
+
+# Hardware / middleware (NOT pip-managed here; install per platform):
+#   pyorbbecsdk   -> Orbbec Gemini 435Le driver (drivers/camera_driver.py)
+#   rclpy + ROS 2 -> RViz2 publishing (viz/rviz_publisher.py)
